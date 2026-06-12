@@ -1132,12 +1132,28 @@ class TestSchedulerSuppressTokens:
                     shared_kv_states={},
                 )
 
-        mock_model._language_model = FakeLanguageModel()
+        class FakeVLMAdapter:
+            def __init__(self):
+                self._language_model = FakeLanguageModel()
+                self.calls = []
+                self.batch_rope_deltas = None
+
+            def set_batch_rope_deltas(self, deltas):
+                self.batch_rope_deltas = deltas
+
+            def __call__(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return self._language_model(*args, **kwargs)
+
+        mock_model = FakeVLMAdapter()
+        scheduler.model = mock_model
         request = Request(
             request_id="req-mtp",
             prompt=[1],
             sampling_params=SamplingParams(max_tokens=4),
         )
+        request.prompt_token_ids = [1]
+        request.rope_deltas = 123.0
         cache = [SimpleNamespace(state=mx.array([0]))]
 
         def sampler(logits):
@@ -1167,6 +1183,9 @@ class TestSchedulerSuppressTokens:
             )
 
         assert uid is not None
+        assert mock_model.calls
+        assert captured["target_language_model"] is mock_model
+        assert float(mock_model.batch_rope_deltas.item()) == 123.0
         assert captured["first_bonus"] == 2
 
         round_logits = mx.array([[0.0, 0.0, 1.0, 99.0, 0.0]])

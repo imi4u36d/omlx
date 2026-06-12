@@ -5128,6 +5128,7 @@ class Scheduler:
                 request.request_id,
             )
             return None
+        target_model = self.model
 
         if not last_tokens:
             logger.warning(
@@ -5140,7 +5141,10 @@ class Scheduler:
         last_arr = mx.array(last_tokens)[None]  # (1, len_last)
         try:
             with mx.stream(self._stream):
-                out = lm(
+                set_batch_rope = getattr(target_model, "set_batch_rope_deltas", None)
+                if callable(set_batch_rope):
+                    set_batch_rope(mx.array([request.rope_deltas]))
+                out = target_model(
                     last_arr,
                     cache=prefilled_cache,
                     return_hidden=True,
@@ -5185,11 +5189,15 @@ class Scheduler:
 
         try:
             generator = run_vlm_mtp_decode(
-                target_language_model=lm,
+                target_language_model=target_model,
                 drafter=drafter,
                 prompt_cache=prefilled_cache,
                 hidden=hidden,
-                shared_kv_states=getattr(out, "shared_kv_states", {}) if not isinstance(out, tuple) else {},
+                shared_kv_states=(
+                    getattr(out, "shared_kv_states", {})
+                    if not isinstance(out, tuple)
+                    else {}
+                ),
                 first_bonus=int(first_bonus_arr.item()),
                 max_tokens=request.sampling_params.max_tokens,
                 sampler=mtp_sampler,
